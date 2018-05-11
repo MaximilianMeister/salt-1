@@ -53,33 +53,10 @@ import logging
 
 # Import Salt libs
 from salt.pillar.sql_base import SqlBaseExtPillar
+import salt.utils.mysql
 
 # Set up logging
 log = logging.getLogger(__name__)
-
-# Import third party libs
-try:
-    # Trying to import MySQLdb
-    import MySQLdb
-    import MySQLdb.cursors
-    import MySQLdb.converters
-except ImportError:
-    try:
-        # MySQLdb import failed, try to import PyMySQL
-        import pymysql
-        pymysql.install_as_MySQLdb()
-        import MySQLdb
-        import MySQLdb.cursors
-        import MySQLdb.converters
-    except ImportError:
-        MySQLdb = None
-
-
-def __virtual__():
-    '''
-    Confirm that a python mysql client is installed.
-    '''
-    return bool(MySQLdb), 'No python mysql client installed.' if MySQLdb is None else ''
 
 
 class MySQLExtPillar(SqlBaseExtPillar):
@@ -90,37 +67,19 @@ class MySQLExtPillar(SqlBaseExtPillar):
     def _db_name(cls):
         return 'MySQL'
 
-    def _get_options(self):
-        '''
-        Returns options used for the MySQL connection.
-        '''
-        defaults = {'host': 'localhost',
-                    'user': 'salt',
-                    'pass': 'salt',
-                    'db': 'salt',
-                    'port': 3306,
-                    'ssl': {}}
-        _options = {}
-        _opts = __opts__.get('mysql', {})
-        for attr in defaults:
-            if attr not in _opts:
-                log.debug('Using default for MySQL %s', attr)
-                _options[attr] = defaults[attr]
-                continue
-            _options[attr] = _opts[attr]
-        return _options
-
     @contextmanager
     def _get_cursor(self):
         '''
         Yield a MySQL cursor
         '''
-        _options = self._get_options()
-        conn = MySQLdb.connect(host=_options['host'],
-                               user=_options['user'],
-                               passwd=_options['pass'],
-                               db=_options['db'], port=_options['port'],
-                               ssl=_options['ssl'])
+        pillar_options_key = "mysql"
+        _opts = salt.utils.mysql.get_mysql_options(pillar_options_key, __opts__)
+        conn = salt.utils.mysql.connect(_opts)
+
+        if conn is False
+            log.error('MySQL connection failed')
+            return False
+
         cursor = conn.cursor()
         try:
             yield cursor

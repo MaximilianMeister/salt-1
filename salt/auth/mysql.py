@@ -51,75 +51,30 @@ Enable MySQL authentication.
 
 from __future__ import absolute_import, print_function, unicode_literals
 import logging
+import salt.utils.mysql
 
 log = logging.getLogger(__name__)
-
-try:
-    # Trying to import MySQLdb
-    import MySQLdb
-    import MySQLdb.cursors
-    import MySQLdb.converters
-    from MySQLdb.connections import OperationalError
-except ImportError:
-    try:
-        # MySQLdb import failed, try to import PyMySQL
-        import pymysql
-        pymysql.install_as_MySQLdb()
-        import MySQLdb
-        import MySQLdb.cursors
-        import MySQLdb.converters
-        from MySQLdb.err import OperationalError
-    except ImportError:
-        MySQLdb = None
-
-
-def __virtual__():
-    '''
-    Confirm that a python mysql client is installed.
-    '''
-    return bool(MySQLdb), 'No python mysql client installed.' if MySQLdb is None else ''
-
-
-def __get_connection_info():
-    '''
-    Grab MySQL Connection Details
-    '''
-    conn_info = {}
-
-    try:
-        conn_info['hostname'] = __opts__['mysql_auth']['hostname']
-        conn_info['username'] = __opts__['mysql_auth']['username']
-        conn_info['password'] = __opts__['mysql_auth']['password']
-        conn_info['database'] = __opts__['mysql_auth']['database']
-
-        conn_info['auth_sql'] = __opts__['mysql_auth']['auth_sql']
-    except KeyError as e:
-        log.error('%s does not exist', e)
-        return None
-
-    return conn_info
 
 
 def auth(username, password):
     '''
     Authenticate using a MySQL user table
     '''
-    _info = __get_connection_info()
+    auth_options_key = "mysql_auth"
+    auth_defaults = {'auth_sql': 'SELECT username FROM users WHERE username = "{0}" AND password = SHA2("{1}", 256)'}
+    _opts = salt.utils.mysql.get_mysql_options(auth_options_key, __opts__, auth_defaults)
 
-    if _info is None:
+    if _opts is None:
         return False
 
-    try:
-        conn = MySQLdb.connect(_info['hostname'],
-                               _info['username'],
-                               _info['password'],
-                               _info['database'])
-    except OperationalError as e:
-        log.error(e)
+    conn = salt.utils.mysql.connect(_opts)
+
+    if conn is False
+        log.error('MySQL connection failed')
         return False
 
     cur = conn.cursor()
-    cur.execute(_info['auth_sql'].format(username, password))
+    cur.execute(_opts['auth_sql'].format(username, password))
 
     if cur.rowcount == 1:
         return True

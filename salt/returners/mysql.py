@@ -153,90 +153,23 @@ import logging
 import salt.returners
 import salt.utils.jid
 import salt.utils.json
+import salt.utils.mysql
 import salt.exceptions
 
 # Import 3rd-party libs
 from salt.ext import six
 
-try:
-    # Trying to import MySQLdb
-    import MySQLdb
-    import MySQLdb.cursors
-    import MySQLdb.converters
-    from MySQLdb.connections import OperationalError
-except ImportError:
-    try:
-        # MySQLdb import failed, try to import PyMySQL
-        import pymysql
-        pymysql.install_as_MySQLdb()
-        import MySQLdb
-        import MySQLdb.cursors
-        import MySQLdb.converters
-        from MySQLdb.err import OperationalError
-    except ImportError:
-        MySQLdb = None
 
 log = logging.getLogger(__name__)
 
-# Define the module's virtual name
-__virtualname__ = 'mysql'
-
-
-def __virtual__():
-    '''
-    Confirm that a python mysql client is installed.
-    '''
-    return bool(MySQLdb), 'No python mysql client installed.' if MySQLdb is None else ''
-
-
-def _get_options(ret=None):
-    '''
-    Returns options used for the MySQL connection.
-    '''
-    defaults = {'host': 'salt',
-                'user': 'salt',
-                'pass': 'salt',
-                'db': 'salt',
-                'port': 3306,
-                'ssl_ca': None,
-                'ssl_cert': None,
-                'ssl_key': None,
-                'unix_socket': '/tmp/mysql.sock'}
-
-    attrs = {'host': 'host',
-             'user': 'user',
-             'pass': 'pass',
-             'db': 'db',
-             'port': 'port',
-             'ssl_ca': 'ssl_ca',
-             'ssl_cert': 'ssl_cert',
-             'ssl_key': 'ssl_key',
-             'unix_socket': 'unix_socket'}
-
-    _options = salt.returners.get_returner_options(__virtualname__,
-                                                   ret,
-                                                   attrs,
-                                                   __salt__=__salt__,
-                                                   __opts__=__opts__,
-                                                   defaults=defaults)
-    # post processing
-    for k, v in six.iteritems(_options):
-        if isinstance(v, six.string_types) and v.lower() == 'none':
-            # Ensure 'None' is rendered as None
-            _options[k] = None
-        if k == 'port':
-            # Ensure port is an int
-            _options[k] = int(v)
-
-    return _options
-
 
 @contextmanager
-def _get_serv(ret=None, commit=False):
+def _get_serv(commit=False):
     '''
     Return a mysql cursor
     '''
-    _options = _get_options(ret)
+    returner_options_key = "mysql"
+    _options = salt.utils.mysql.get_mysql_options(returner_options_key, __opts__)
 
     connect = True
     if __context__ and 'mysql_returner_conn' in __context__:
@@ -251,22 +184,7 @@ def _get_serv(ret=None, commit=False):
     if connect:
         log.debug('Generating new MySQL connection pool')
         try:
-            # An empty ssl_options dictionary passed to MySQLdb.connect will
-            # effectively connect w/o SSL.
-            ssl_options = {}
-            if _options.get('ssl_ca'):
-                ssl_options['ca'] = _options.get('ssl_ca')
-            if _options.get('ssl_cert'):
-                ssl_options['cert'] = _options.get('ssl_cert')
-            if _options.get('ssl_key'):
-                ssl_options['key'] = _options.get('ssl_key')
-            conn = MySQLdb.connect(host=_options.get('host'),
-                                   user=_options.get('user'),
-                                   passwd=_options.get('pass'),
-                                   db=_options.get('db'),
-                                   port=_options.get('port'),
-                                   ssl=ssl_options,
-                                   unix_socket=_options.get('unix_socket'))
+            conn = salt.utils.mysql.connect(_options)
 
             try:
                 __context__['mysql_returner_conn'] = conn
@@ -301,7 +219,7 @@ def returner(ret):
         save_load(ret['jid'], ret)
 
     try:
-        with _get_serv(ret, commit=True) as cur:
+        with _get_serv(commit=True) as cur:
             sql = '''INSERT INTO `salt_returns`
                      (`fun`, `jid`, `return`, `id`, `success`, `full_ret`)
                      VALUES (%s, %s, %s, %s, %s, %s)'''
@@ -323,7 +241,7 @@ def event_return(events):
     Requires that configuration be enabled via 'event_return'
     option in master config.
     '''
-    with _get_serv(events, commit=True) as cur:
+    with _get_serv(commit=True) as cur:
         for event in events:
             tag = event.get('tag', '')
             data = event.get('data', '')
@@ -360,7 +278,7 @@ def get_load(jid):
     '''
     Return the load data that marks a specified jid
     '''
-    with _get_serv(ret=None, commit=True) as cur:
+    with _get_serv(commit=True) as cur:
 
         sql = '''SELECT `load` FROM `jids` WHERE `jid` = %s;'''
         cur.execute(sql, (jid,))
@@ -374,7 +292,7 @@ def get_jid(jid):
     '''
     Return the information returned when the specified job id was executed
     '''
-    with _get_serv(ret=None, commit=True) as cur:
+    with _get_serv(commit=True) as cur:
 
         sql = '''SELECT id, full_ret FROM `salt_returns`
                 WHERE `jid` = %s'''
@@ -392,7 +310,7 @@ def get_fun(fun):
     '''
     Return a dict of the last function called for all minions
     '''
-    with _get_serv(ret=None, commit=True) as cur:
+    with _get_serv(commit=True) as cur:
 
         sql = '''SELECT s.id,s.jid, s.full_ret
                 FROM `salt_returns` s
@@ -416,7 +334,7 @@ def get_jids():
     '''
     Return a list of all job ids
     '''
-    with _get_serv(ret=None, commit=True) as cur:
+    with _get_serv(commit=True) as cur:
 
         sql = '''SELECT DISTINCT `jid`, `load`
                 FROM `jids`'''
@@ -437,7 +355,7 @@ def get_jids_filter(count, filter_find_job=True):
     :param int count: show not more than the count of most recent jobs
     :param bool filter_find_jobs: filter out 'saltutil.find_job' jobs
     '''
-    with _get_serv(ret=None, commit=True) as cur:
+    with _get_serv(commit=True) as cur:
 
         sql = '''SELECT * FROM (
                      SELECT DISTINCT `jid` ,`load` FROM `jids`
@@ -461,7 +379,7 @@ def get_minions():
     '''
     Return a list of minions
     '''
-    with _get_serv(ret=None, commit=True) as cur:
+    with _get_serv(commit=True) as cur:
 
         sql = '''SELECT DISTINCT id
                 FROM `salt_returns`'''
